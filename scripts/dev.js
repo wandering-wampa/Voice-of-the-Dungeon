@@ -95,38 +95,43 @@ function killPort(targetPort) {
 
 
 async function ensurePortFree(targetPort) {
-  let loggedInUse = false;
+  let wasInUse = false;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const pids = getPortPids(targetPort);
     if (pids.length === 0) {
-      console.log(`Port ${targetPort} status: free`);
-      return true;
+      return { ready: true, wasInUse };
     }
-    if (!loggedInUse) {
-      console.log(
-        `Port ${targetPort} status: in-use (PID${pids.length > 1 ? "s" : ""}: ${pids.join(", ")}). Attempting to free...`
-      );
-      loggedInUse = true;
-    }
+    wasInUse = true;
     killPort(targetPort);
     sleep(300);
   }
 
   const remaining = getPortPids(targetPort);
-  if (remaining.length > 0) {
-    console.error(
-      `Port ${targetPort} status: in-use (PID${remaining.length > 1 ? "s" : ""}: ${remaining.join(", ")}).`
-    );
-    console.error("Close those processes or run as Administrator.");
-  }
-  return false;
+  return {
+    ready: false,
+    wasInUse,
+    remaining
+  };
 }
 
 async function main() {
-  const ready = await ensurePortFree(port);
-  if (!ready) {
+  const portStatus = await ensurePortFree(port);
+  if (!portStatus.ready) {
+    const remaining = portStatus.remaining ?? [];
+    if (remaining.length > 0) {
+      console.error(
+        `\n[dev] Port ${port} status: in-use (PID${remaining.length > 1 ? "s" : ""}: ${remaining.join(", ")}).\n`
+      );
+    } else {
+      console.error(`\n[dev] Port ${port} status: in-use.\n`);
+    }
+    console.error("[dev] Close those processes or run as Administrator.");
     process.exit(1);
   }
+
+  const statusSuffix = portStatus.wasInUse ? "free (after cleanup)" : "free";
+  const portStatusMessage = `[dev] Port ${port} status: ${statusSuffix}`;
+  console.log(`\n${portStatusMessage}\n`);
 
   const env = { ...process.env, VITE_PORT: String(port) };
   const tsc = spawn(nodeBin, [tscBin, "-w", "-p", "tsconfig.main.json"], {
@@ -137,9 +142,33 @@ async function main() {
 
   const vite = spawn(nodeBin, [viteBin, "--strictPort", "--port", String(port)], {
     cwd: rootDir,
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
     env,
   });
+
+  let portStatusReprinted = false;
+  const maybeReprintStatus = (chunk) => {
+    if (portStatusReprinted) return;
+    const text = chunk.toString();
+    if (/ready in/i.test(text) || /vite v/i.test(text)) {
+      portStatusReprinted = true;
+      process.stdout.write(`\n${portStatusMessage} (post-vite)\n\n`);
+    }
+  };
+
+  if (vite.stdout) {
+    vite.stdout.on("data", (chunk) => {
+      process.stdout.write(chunk);
+      maybeReprintStatus(chunk);
+    });
+  }
+
+  if (vite.stderr) {
+    vite.stderr.on("data", (chunk) => {
+      process.stderr.write(chunk);
+      maybeReprintStatus(chunk);
+    });
+  }
 
   const electron = spawn(process.execPath, [path.join(__dirname, "run-electron.js")], {
     cwd: rootDir,
