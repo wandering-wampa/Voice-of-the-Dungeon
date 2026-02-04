@@ -77,8 +77,7 @@ ipcMain.handle('stt:transcribe', async (_event: unknown, audioBuffer: ArrayBuffe
     return { text: '', error: 'stt_unavailable' };
   }
 
-  const sttUrl =
-    process.env.VOD_STT_URL ?? 'http://127.0.0.1:8000/v1/audio/transcriptions';
+  const sttUrl = process.env.VOD_STT_URL ?? sttManager.getTranscriptionUrl();
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
@@ -108,6 +107,7 @@ ipcMain.handle('stt:transcribe', async (_event: unknown, audioBuffer: ArrayBuffe
     const data = (await response.json()) as { text?: string };
     return { text: data.text ?? '' };
   } catch (error) {
+    await sttManager.restart();
     return { text: '', error: 'stt_request_failed' };
   } finally {
     clearTimeout(timeout);

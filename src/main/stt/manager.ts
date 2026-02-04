@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
@@ -80,6 +81,10 @@ export class SttManager extends EventEmitter {
     return this.status;
   }
 
+  getTranscriptionUrl() {
+    return `http://${this.config.host}:${this.config.port}/v1/audio/transcriptions`;
+  }
+
   async ensureReady() {
     if (this.status.state === 'running') {
       return;
@@ -108,6 +113,11 @@ export class SttManager extends EventEmitter {
     this.setStatus({ state: 'idle' });
   }
 
+  async restart() {
+    await this.stop();
+    await this.ensureReady();
+  }
+
   private async startInternal() {
     const runtimePath = await this.ensureRuntime();
     if (!runtimePath) {
@@ -116,6 +126,16 @@ export class SttManager extends EventEmitter {
     }
 
     this.setStatus({ state: 'starting', message: 'Starting STT service...' });
+
+    await killStaleProcess(this.config.runtimeExe);
+    const selectedPort = await findAvailablePort(this.config.host, this.config.port);
+    if (selectedPort !== this.config.port) {
+      this.config.port = selectedPort;
+      this.setStatus({
+        state: 'starting',
+        message: `Port 8000 busy, using ${selectedPort}...`
+      });
+    }
 
     const modelDir = this.getModelDir();
     await fsPromises.mkdir(modelDir, { recursive: true });
@@ -230,6 +250,54 @@ export class SttManager extends EventEmitter {
     this.status = status;
     this.emit('status', status);
   }
+}
+
+async function killStaleProcess(processName: string) {
+  if (process.platform !== 'win32') {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const child = spawn('taskkill', ['/IM', processName, '/F'], {
+      windowsHide: true,
+      stdio: 'ignore'
+    });
+
+    child.on('exit', () => resolve());
+    child.on('error', () => resolve());
+  });
+}
+
+async function isPortAvailable(host: string, port: number) {
+  return new Promise<boolean>((resolve) => {
+    const server = net.createServer();
+    server.once('error', (error) => {
+      if (typeof error === 'object' && error && 'code' in error) {
+        resolve((error as { code?: string }).code !== 'EADDRINUSE');
+      } else {
+        resolve(false);
+      }
+    });
+
+    server.listen(port, host, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function findAvailablePort(host: string, preferredPort: number) {
+  if (await isPortAvailable(host, preferredPort)) {
+    return preferredPort;
+  }
+
+  for (let offset = 1; offset <= 10; offset += 1) {
+    const candidate = preferredPort + offset;
+    if (await isPortAvailable(host, candidate)) {
+      return candidate;
+    }
+  }
+
+  return preferredPort;
 }
 
 async function waitForServer(host: string, port: number, timeoutMs: number) {

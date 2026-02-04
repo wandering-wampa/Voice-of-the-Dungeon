@@ -40,6 +40,7 @@ Environment variables:
 Runtime pack note:
 - The default runtime URL points to a GitHub Release asset that must be published as `vod-stt-win-x64.zip`.
 - Logs are written under the userData directory: `stt/logs/`.
+- The app will auto-restart the STT service if it crashes or the port is busy.
 
 ### Build the STT runtime pack (maintainers)
 See `stt-runtime/README.md` for build instructions.
