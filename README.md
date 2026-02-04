@@ -34,9 +34,11 @@ Environment variables:
 - `VOD_STT_LANG` (default `en`)
 - `VOD_STT_RUNTIME_URL` (override runtime pack download URL)
 - `VOD_STT_RUNTIME_EXE` (override runtime executable name)
+- `VOD_STT_RUNTIME_VERSION` (override runtime pack version key)
 
 Runtime pack note:
 - The default runtime URL points to a GitHub Release asset that must be published as `vod-stt-win-x64.zip`.
+- Logs are written under the userData directory: `stt/logs/`.
 
 ### Build the STT runtime pack (maintainers)
 See `stt-runtime/README.md` for build instructions.

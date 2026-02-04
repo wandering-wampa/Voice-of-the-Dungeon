@@ -2,10 +2,11 @@
   "name": "voice-of-the-dungeon",
   "productName": "Voice of the Dungeon",
   "version": "0.1.0",
+  "type": "commonjs",
   "private": true,
   "main": "dist/main/main.js",
   "scripts": {
-    "dev": "concurrently -k \"tsc -w -p tsconfig.main.json\" \"vite\" \"wait-on tcp:5173 dist/main/main.js && electron .\"",
+    "dev": "concurrently -k \"tsc -w -p tsconfig.main.json\" \"vite\" \"wait-on tcp:5173 dist/main/main.js && node scripts/run-electron.js\"",
     "start": "npm run dev",
     "build": "tsc -p tsconfig.main.json && vite build",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.json --noEmit"

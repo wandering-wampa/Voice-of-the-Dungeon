@@ -1,11 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { SttManager } from './stt/manager';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173';
@@ -66,11 +62,11 @@ app.on('before-quit', () => {
   sttManager.stop().catch(() => {});
 });
 
-ipcMain.handle('ping', (_event, message: string) => {
+ipcMain.handle('ping', (_event: unknown, message: string) => {
   return `pong: ${message}`;
 });
 
-ipcMain.handle('stt:transcribe', async (_event, audioBuffer: ArrayBuffer) => {
+ipcMain.handle('stt:transcribe', async (_event: unknown, audioBuffer: ArrayBuffer) => {
   if (!audioBuffer || audioBuffer.byteLength === 0) {
     return { text: '', error: 'empty_audio' };
   }
@@ -101,7 +97,12 @@ ipcMain.handle('stt:transcribe', async (_event, audioBuffer: ArrayBuffer) => {
     });
 
     if (!response.ok) {
-      return { text: '', error: `stt_http_${response.status}` };
+      const detail = await response.text();
+      const trimmed = detail ? detail.slice(0, 500) : '';
+      return {
+        text: '',
+        error: trimmed ? `stt_http_${response.status}: ${trimmed}` : `stt_http_${response.status}`
+      };
     }
 
     const data = (await response.json()) as { text?: string };

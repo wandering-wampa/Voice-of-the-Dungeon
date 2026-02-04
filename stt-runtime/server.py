@@ -5,7 +5,7 @@ import wave
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from faster_whisper import WhisperModel
 import uvicorn
 
@@ -104,24 +104,48 @@ async def transcribe(
     model: str = Form("small"),
     language: Optional[str] = Form(None),
 ):
-    data = await file.read()
-    audio = decode_wav(data)
+    try:
+        data = await file.read()
+        audio = decode_wav(data)
 
-    whisper = get_model(
-        model_name=model,
-        device=SERVER_CONFIG["device"],
-        compute_type=SERVER_CONFIG["compute_type"],
-        cache_dir=SERVER_CONFIG["cache_dir"]
-    )
+        if audio.size < 1600:
+            return {"text": ""}
 
-    segments, _info = whisper.transcribe(
-        audio,
-        language=language,
-        vad_filter=True
-    )
+        whisper = get_model(
+            model_name=model,
+            device=SERVER_CONFIG["device"],
+            compute_type=SERVER_CONFIG["compute_type"],
+            cache_dir=SERVER_CONFIG["cache_dir"]
+        )
 
-    text = "".join(segment.text for segment in segments).strip()
-    return {"text": text}
+        try:
+            segments, _info = whisper.transcribe(
+                audio,
+                language=language,
+                vad_filter=True
+            )
+        except Exception as exc:
+            if SERVER_CONFIG["device"] != "cpu":
+                whisper = get_model(
+                    model_name=model,
+                    device="cpu",
+                    compute_type="int8",
+                    cache_dir=SERVER_CONFIG["cache_dir"]
+                )
+                segments, _info = whisper.transcribe(
+                    audio,
+                    language=language,
+                    vad_filter=True
+                )
+            else:
+                raise exc
+
+        text = "".join(segment.text for segment in segments).strip()
+        return {"text": text}
+    except Exception as exc:
+        message = f"STT error: {exc}"
+        print(message, flush=True)
+        raise HTTPException(status_code=500, detail=message)
 
 
 SERVER_CONFIG: dict[str, Optional[str]] = {}

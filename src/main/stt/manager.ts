@@ -22,6 +22,7 @@ type SttConfig = {
   model: string;
   device: string;
   computeType: string;
+  runtimeVersion: string;
   runtimeUrl: string;
   runtimeExe: string;
   runtimeArgs: string[];
@@ -33,8 +34,9 @@ const DEFAULT_CONFIG: SttConfig = {
   model: 'small',
   device: 'cuda',
   computeType: 'int8_float16',
+  runtimeVersion: 'stt-runtime-v0.1.1',
   runtimeUrl:
-    'https://github.com/wandering-wampa/Voice-of-the-Dungeon/releases/download/stt-runtime-v0.1.0/vod-stt-win-x64.zip',
+    'https://github.com/wandering-wampa/Voice-of-the-Dungeon/releases/download/stt-runtime-v0.1.1/vod-stt-win-x64.zip',
   runtimeExe: 'vod-stt-server.exe',
   runtimeArgs: [
     '--host',
@@ -55,6 +57,7 @@ const DEFAULT_CONFIG: SttConfig = {
 export class SttManager extends EventEmitter {
   private status: SttStatus = { state: 'idle' };
   private child: ChildProcess | null = null;
+  private logStream: fs.WriteStream | null = null;
   private startPromise: Promise<void> | null = null;
   private config: SttConfig;
 
@@ -67,6 +70,7 @@ export class SttManager extends EventEmitter {
       model: process.env.VOD_STT_MODEL ?? DEFAULT_CONFIG.model,
       device: process.env.VOD_STT_DEVICE ?? DEFAULT_CONFIG.device,
       computeType: process.env.VOD_STT_COMPUTE ?? DEFAULT_CONFIG.computeType,
+      runtimeVersion: process.env.VOD_STT_RUNTIME_VERSION ?? DEFAULT_CONFIG.runtimeVersion,
       runtimeUrl: process.env.VOD_STT_RUNTIME_URL ?? DEFAULT_CONFIG.runtimeUrl,
       runtimeExe: process.env.VOD_STT_RUNTIME_EXE ?? DEFAULT_CONFIG.runtimeExe
     };
@@ -99,6 +103,8 @@ export class SttManager extends EventEmitter {
       this.child.kill();
     }
     this.child = null;
+    this.logStream?.end();
+    this.logStream = null;
     this.setStatus({ state: 'idle' });
   }
 
@@ -124,10 +130,18 @@ export class SttManager extends EventEmitter {
         .replace('{modelDir}', modelDir)
     );
 
+    const logDir = path.join(this.getSttRootDir(), 'logs');
+    await fsPromises.mkdir(logDir, { recursive: true });
+    const logPath = path.join(logDir, `stt-${Date.now()}.log`);
+    this.logStream = fs.createWriteStream(logPath, { flags: 'a' });
+
     this.child = spawn(runtimePath, args, {
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
     });
+
+    this.child.stdout?.pipe(this.logStream);
+    this.child.stderr?.pipe(this.logStream);
 
     this.child.on('exit', () => {
       if (this.status.state === 'running') {
@@ -147,8 +161,9 @@ export class SttManager extends EventEmitter {
   private async ensureRuntime() {
     const runtimeDir = this.getRuntimeDir();
     const runtimePath = path.join(runtimeDir, this.config.runtimeExe);
+    const versionPath = path.join(runtimeDir, 'runtime-version.txt');
 
-    if (fs.existsSync(runtimePath)) {
+    if (fs.existsSync(runtimePath) && this.runtimeVersionMatches(versionPath)) {
       return runtimePath;
     }
 
@@ -156,6 +171,7 @@ export class SttManager extends EventEmitter {
       return '';
     }
 
+    await fsPromises.rm(runtimeDir, { recursive: true, force: true });
     await fsPromises.mkdir(runtimeDir, { recursive: true });
 
     const downloadDir = path.join(this.getSttRootDir(), 'downloads');
@@ -175,6 +191,8 @@ export class SttManager extends EventEmitter {
     await extractZip(archivePath, runtimeDir);
     await fsPromises.unlink(archivePath);
 
+    await fsPromises.writeFile(versionPath, this.config.runtimeVersion, 'utf-8');
+
     if (!fs.existsSync(runtimePath)) {
       this.setStatus({ state: 'error', message: 'STT runtime install failed.' });
       return '';
@@ -193,6 +211,19 @@ export class SttManager extends EventEmitter {
 
   private getModelDir() {
     return path.join(this.getSttRootDir(), 'models');
+  }
+
+  private runtimeVersionMatches(versionPath: string) {
+    if (!fs.existsSync(versionPath)) {
+      return false;
+    }
+
+    try {
+      const current = fs.readFileSync(versionPath, 'utf-8').trim();
+      return current === this.config.runtimeVersion;
+    } catch {
+      return false;
+    }
   }
 
   private setStatus(status: SttStatus) {
