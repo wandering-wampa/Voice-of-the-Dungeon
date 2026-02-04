@@ -104,9 +104,16 @@ export class SttManager extends EventEmitter {
   }
 
   async stop() {
-    if (this.child && !this.child.killed) {
-      this.child.kill();
+    const child = this.child;
+    if (child && !child.killed) {
+      child.kill();
+      const exited = await waitForChildExit(child, 1500);
+      if (!exited && child.pid) {
+        await forceKillPid(child.pid);
+        await waitForChildExit(child, 1500);
+      }
     }
+
     this.child = null;
     this.logStream?.end();
     this.logStream = null;
@@ -269,6 +276,41 @@ async function killStaleProcess(processName: string) {
     child.on('exit', () => resolve());
     child.on('error', () => resolve());
   });
+}
+
+async function waitForChildExit(child: ChildProcess, timeoutMs: number) {
+  if (child.exitCode !== null) {
+    return true;
+  }
+
+  return new Promise<boolean>((resolve) => {
+    const timeout = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timeout);
+      resolve(true);
+    });
+  });
+}
+
+async function forceKillPid(pid: number) {
+  if (process.platform === 'win32') {
+    await new Promise<void>((resolve) => {
+      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+
+      killer.on('exit', () => resolve());
+      killer.on('error', () => resolve());
+    });
+    return;
+  }
+
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // Ignore if already dead.
+  }
 }
 
 async function isPortAvailable(host: string, port: number) {

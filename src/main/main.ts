@@ -7,6 +7,7 @@ const isDev = !app.isPackaged;
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173';
 const preloadPath = path.join(__dirname, 'preload.js');
 const sttManager = new SttManager();
+let isQuitting = false;
 
 function createMainWindow() {
   const mainWindow = new BrowserWindow({
@@ -58,8 +59,19 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
-  sttManager.stop().catch(() => {});
+app.on('before-quit', (event) => {
+  if (isQuitting) {
+    return;
+  }
+
+  event.preventDefault();
+  isQuitting = true;
+  sttManager
+    .stop()
+    .catch(() => {})
+    .finally(() => {
+      app.exit(0);
+    });
 });
 
 ipcMain.handle('ping', (_event: unknown, message: string) => {
