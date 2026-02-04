@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { SttManager } from './stt/manager';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,6 +10,7 @@ const __dirname = path.dirname(__filename);
 const isDev = !app.isPackaged;
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173';
 const preloadPath = path.join(__dirname, 'preload.js');
+const sttManager = new SttManager();
 
 function createMainWindow() {
   const mainWindow = new BrowserWindow({
@@ -35,10 +37,17 @@ function createMainWindow() {
     const indexPath = path.join(__dirname, '../renderer/index.html');
     mainWindow.loadFile(indexPath);
   }
+
+  sttManager.on('status', (status) => {
+    mainWindow.webContents.send('stt:status', status);
+  });
 }
 
 app.whenReady().then(() => {
   createMainWindow();
+  sttManager.ensureReady().catch(() => {
+    // Status updates are sent through the manager.
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -53,6 +62,62 @@ app.on('window-all-closed', () => {
   }
 });
 
+app.on('before-quit', () => {
+  sttManager.stop().catch(() => {});
+});
+
 ipcMain.handle('ping', (_event, message: string) => {
   return `pong: ${message}`;
+});
+
+ipcMain.handle('stt:transcribe', async (_event, audioBuffer: ArrayBuffer) => {
+  if (!audioBuffer || audioBuffer.byteLength === 0) {
+    return { text: '', error: 'empty_audio' };
+  }
+
+  await sttManager.ensureReady();
+
+  if (sttManager.getStatus().state !== 'running') {
+    return { text: '', error: 'stt_unavailable' };
+  }
+
+  const sttUrl =
+    process.env.VOD_STT_URL ?? 'http://127.0.0.1:8000/v1/audio/transcriptions';
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const form = new FormData();
+    const audioBlob = new Blob([Buffer.from(audioBuffer)], { type: 'audio/wav' });
+    form.append('file', audioBlob, 'audio.wav');
+    form.append('model', process.env.VOD_STT_MODEL ?? 'small');
+    form.append('language', process.env.VOD_STT_LANG ?? 'en');
+
+    const response = await fetch(sttUrl, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return { text: '', error: `stt_http_${response.status}` };
+    }
+
+    const data = (await response.json()) as { text?: string };
+    return { text: data.text ?? '' };
+  } catch (error) {
+    return { text: '', error: 'stt_request_failed' };
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
+ipcMain.handle('stt:status', () => {
+  return sttManager.getStatus();
+});
+
+ipcMain.handle('stt:ensure', async () => {
+  await sttManager.ensureReady();
+  return sttManager.getStatus();
 });

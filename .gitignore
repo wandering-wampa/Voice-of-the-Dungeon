@@ -4,3 +4,7 @@ dist
 *.log
 *.tsbuildinfo
 .env
+stt-runtime/.venv
+stt-runtime/build
+stt-runtime/dist
+stt-runtime/__pycache__
