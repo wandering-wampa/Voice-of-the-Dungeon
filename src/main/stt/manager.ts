@@ -155,9 +155,12 @@ export class SttManager extends EventEmitter {
     const logPath = path.join(logDir, `stt-${Date.now()}.log`);
     this.logStream = fs.createWriteStream(logPath, { flags: 'a' });
 
+    const env = withCudaPath(process.env);
+
     this.child = spawn(runtimePath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true
+      windowsHide: true,
+      env
     });
 
     this.child.stdout?.pipe(this.logStream);
@@ -404,4 +407,75 @@ async function extractZip(archivePath: string, destDir: string) {
       }
     });
   });
+}
+
+function withCudaPath(baseEnv: NodeJS.ProcessEnv) {
+  const env = { ...baseEnv };
+  const cudaPath = resolveCudaPath();
+  const cudaBins = cudaPath ? [path.join(cudaPath, 'bin')] : [];
+
+  if (cudaPath) {
+    env.CUDA_PATH = cudaPath;
+  }
+
+  if (cudaBins.length > 0) {
+    const delimiter = process.platform === 'win32' ? ';' : ':';
+    const existing = (env.PATH ?? '').split(delimiter).filter(Boolean);
+    const merged = [...cudaBins, ...existing].filter((value, index, self) => {
+      return self.indexOf(value) === index;
+    });
+    env.PATH = merged.join(delimiter);
+  }
+
+  return env;
+}
+
+function resolveCudaPath() {
+  const envPath = process.env.CUDA_PATH;
+  if (envPath && fs.existsSync(envPath)) {
+    return envPath;
+  }
+
+  if (process.platform !== 'win32') {
+    return '';
+  }
+
+  const root = 'C:\\\\Program Files\\\\NVIDIA GPU Computing Toolkit\\\\CUDA';
+  if (!fs.existsSync(root)) {
+    return '';
+  }
+
+  const versions = fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith('v'))
+    .map((entry) => entry.name);
+
+  if (versions.length === 0) {
+    return '';
+  }
+
+  versions.sort(compareCudaVersions);
+  return path.join(root, versions[versions.length - 1]);
+}
+
+function compareCudaVersions(a: string, b: string) {
+  const parse = (value: string) =>
+    value
+      .replace(/^v/, '')
+      .split('.')
+      .map((part) => Number(part));
+
+  const aParts = parse(a);
+  const bParts = parse(b);
+  const length = Math.max(aParts.length, bParts.length);
+
+  for (let i = 0; i < length; i += 1) {
+    const left = aParts[i] ?? 0;
+    const right = bParts[i] ?? 0;
+    if (left !== right) {
+      return left - right;
+    }
+  }
+
+  return 0;
 }
