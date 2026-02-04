@@ -11,6 +11,7 @@ This is a fresh Electron + Vite + React scaffold. Core systems are not implement
 - Git
 - Ollama (LLM narrator)
 - TTS: Piper
+- NVIDIA CUDA Toolkit 12.x (required for GPU STT; provides `cublas64_12.dll`)
 
 ## Dev Setup
 1. `npm install`
