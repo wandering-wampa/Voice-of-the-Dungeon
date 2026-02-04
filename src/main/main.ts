@@ -108,7 +108,9 @@ ipcMain.handle('stt:transcribe', async (_event: unknown, audioBuffer: ArrayBuffe
     return { text: data.text ?? '' };
   } catch (error) {
     await sttManager.restart();
-    return { text: '', error: 'stt_request_failed' };
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('STT request failed:', message);
+    return { text: '', error: `stt_request_failed: ${message}` };
   } finally {
     clearTimeout(timeout);
   }
